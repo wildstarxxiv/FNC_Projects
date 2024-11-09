@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel to HTML Variables</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 400px; margin: 0 auto; }
+        label { font-weight: bold; }
+        input { width: 100%; padding: 8px; margin: 10px 0; }
+        button { width: 100%; padding: 10px; background-color: #28a745; color: white; border: none; cursor: pointer; }
+        button:hover { background-color: #218838; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Router Configuration Generator</h2>
+
+        <!-- File Input -->
+        <label for="fileUpload">Upload Excel File</label>
+        <input type="file" id="fileUpload" accept=".xlsx, .xls">
+
+        <button onclick="generateConfig()">Generate Config and Download</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+    <script>
+        let configData = {};
+
+        // Function to parse and read the Excel file
+        document.getElementById('fileUpload').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const sheetData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+
+                // Extract necessary data and store it in configData object
+                configData = {
+                    hostname: sheetData[1][3],
+                    location: sheetData[1][2],
+                    pe1Name: sheetData[1][8],
+                    pe1Int: sheetData[1][9],
+                    pe2Name: sheetData[1][14],
+                    pe2Int: sheetData[1][15],
+                    cpeLo0: sheetData[1][11],
+                    mgmtIp1: sheetData[1][12],
+                    mgmtIpNxh: sheetData[2][12],
+                    mgmtIpNet: sheetData[3][12],
+                    snmpDesc: sheetData[2][22]
+                };
+            };
+
+            reader.readAsArrayBuffer(file);
+        });
+
+        // Function to generate the router configuration script
+        function generateConfig() {
+            const {
+                hostname, location, pe1Name, pe1Int, pe2Name, pe2Int,
+                cpeLo0, mgmtIp1, mgmtIpNxh, mgmtIpNet, snmpDesc
+            } = configData;
+
+            const configScript = `
+! Router Configuration Script
+#=======================================================================================================================
+########################################################################################################################
+##########  NEW Site Configuration
+#=======================================================================================================================
+groups {
+    oam-values {
+        protocols {
+            oam {
+                ethernet {
+                    link-fault-management {
+                        interface "<[gx]e-*>" {
+                            apply-action-profile link-down;
+                            pdu-interval 500;
+                            link-discovery active;
+                            pdu-threshold 7;
+                            negotiation-options {
+                                no-allow-link-events;
+                                allow-remote-loopback;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    inet-filter-default-reject {
+        firewall {
+            family inet {
+                filter <*> {
+                    term default {
+                        then {
+                            log;
+                            discard;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+system {
+    host-name ${hostname};
+    auto-snapshot;
+    domain-name KYW.FNC;
+    time-zone America/New_York;
+    arp {
+        aging-timer 5;
+    }
+    authentication-order [ tacplus password ];
+    ports {
+        console {
+            log-out-on-disconnect;
+            type vt100;
+        }
+    }
+    root-authentication {
+        encrypted-password "$5$bZgvWsvH$.62q8R6STWH.j0xI3udK2xleKimd1AGafbWRS9Sw3R1"; ## SECRET-DATA
+    }
+    name-server {
+        168.127.9.27;
+        168.127.10.27;
+    }
+    tacplus-server {
+        168.127.8.27 {
+            port 49;
+            secret "$9$sCgoZHqfQF/Hk0IcSW8DikPTz369uBRhSeM8L-dsYgJjk"; ## SECRET-DATA
+            timeout 5;
+            source-address ${cpeLo0};
+        }
+    }
+    login {
+        message "        ==========================================================\n                          Kentucky Wired\n    Access to this device is limited to authorized users only.\n       WARNING: All unauthorized access is prohibited.\n    ==========================================================";
+
+            class admin {
+            idle-timeout 30;
+            permissions all;
+        }
+        class none {
+            idle-timeout 1;
+            permissions view;
+            allow-commands quit;
+            deny-commands "(show|clear|file|help|load|op|request|save|set|show|start|test).*”;";
+        }
+        class readonly {
+            idle-timeout 15;
+            permissions [ view view-configuration ];
+        }
+        user aaa-adm {
+            full-name "Template user for class Readonly";
+            uid 2010;
+            class admin;
+        }
+        user aaa-none {
+            full-name "Template user for class none";
+            uid 2011;
+            class none;
+        }
+        user aaa-ro {
+            full-name "Template user for class readonly";
+            uid 2012;
+            class readonly;
+        }
+        user nocadmin {
+            full-name "Backup User – Last Resort if TACACS DOWN";
+            uid 2009;
+            class super-user;
+            authentication {
+                encrypted-password "$5$gXTODmea$dYyJoZlVRc3vcp2y286tXE0YJmZNlYlQuF1lBPPjE81"; ## SECRET-DATA
+            }
+        }
+        user remote {
+            full-name tacacs_user;
+            uid 2001;
+            class super-user;
+        }
+    }
+    services {
+        ftp {
+            connection-limit 2;
+            rate-limit 2;
+        }
+        ssh {
+            root-login deny;
+            protocol-version v2;
+            max-sessions-per-connection 32;
+            connection-limit 15;
+            rate-limit 10;
+        }
+        netconf {
+            ssh;
+        }
+    }
+    syslog {
+        user * {
+            any emergency;
+        }
+        host 168.127.10.90 {
+            any notice;
+            authorization any;
+            daemon info;
+            kernel notice;
+            interactive-commands any;
+        }
+        host 168.127.9.90 {
+            any notice;
+            authorization any;
+            daemon info;
+            kernel notice;
+            interactive-commands any;
+        }
+        file messages {
+            any notice;
+            authorization info;
+            daemon any;
+            kernel any;
+            archive world-readable;
+        }
+        file interactive-commands {
+            interactive-commands any;
+        }
+        file security {
+            authorization any;
+            interactive-commands any;
+        }
+        source-address ${cpeLo0};
+    }
+    ntp {
+        boot-server 168.127.8.27;
+        authentication-key 1 type md5 value "$9$46JGjn6Cu01mPpB1ReK24aJGi/Cp1ESTzBEyrvM"; ## SECRET-DATA
+        server 168.127.8.27 prefer;
+        server 168.127.10.34;
+        source-address ${cpeLo0};
+    }
+}
+chassis {
+    dump-on-panic;
+    aggregated-devices {
+        ethernet {
+            device-count 4;
+        }
+    }
+    alarm {
+        management-ethernet {
+            link-down ignore;
+        }
+    }
+    auto-image-upgrade;
+}
+interfaces {
+    ge-0/0/0 {
+        description "To Router CE1";
+        mtu 9192;
+        unit 0 {
+            family ethernet-switching {
+                interface-mode trunk;
+                vlan {
+                    members  [ COT KCTCS AOC  ];
+                }
+                storm-control default;
+            }
+        }
+    } 
+    ge-0/0/1 {
+        description "To Router CE2";
+        mtu 9192;
+        unit 0 {
+            family ethernet-switching {
+                interface-mode trunk;
+                vlan {
+                    members  [ COT KCTCS AOC  ];
+                }
+                storm-control default;
+            }
+        }
+    } 
+    ge-0/0/2 {
+        description "To Router CE3";
+        mtu 9192;
+        unit 0 {
+            family ethernet-switching {
+                interface-mode trunk;
+                vlan {
+                    members  [ COT KCTCS AOC  ];
+                }
+                storm-control default;
+            }
+        }
+    } 
+    ge-0/0/3 {
+        description "To Router CE4";
+        mtu 9192;
+        unit 0 {
+            family ethernet-switching {
+                interface-mode trunk;
+                vlan {
+                    members  [ COT KCTCS AOC  ];
+                }
+                storm-control default;
+            }
+        }
+    } 
+    ge-0/0/4 {
+        description "To Router CE5";
+        mtu 9192;
+        unit 0 {
+            family ethernet-switching {
+                interface-mode trunk;
+                vlan {
+                    members  [ COT KCTCS AOC  ];
+                }
+                storm-control default;
+            }
+        }
+    } 
+    xe-0/2/3 {
+        description "To KCTCS_CE";
+        mtu 9192;
+        unit 0 {
+            family ethernet-switching {
+                interface-mode trunk;
+                vlan {
+                    members   KCTCS  ;
+                }
+                storm-control default;
+            }
+        }
+    } 
+    xe-0/2/0 {
+        description "to ${pe1Name}.${pe1Int}";
+        ether-options {
+            802.3ad ae0;
+        }
+    }
+    xe-0/2/1 {
+        description "to ${pe2Name}.${pe2Int}";
+        ether-options {
+            802.3ad ae0;
+        }
+    }
+    ae0 {
+        description "to ${pe1Name}.ae";
+        mtu 9192;
+        aggregated-ether-options {
+            minimum-links 1;
+            lacp {
+                active;
+                periodic fast;
+            }
+        }
+        unit 0 {
+            family ethernet-switching {
+                interface-mode trunk;
+                vlan {
+                    members all;
+                }
+            }
+        }
+    }
+    irb {
+        unit 16 {
+            description "PE-CPE mgmt vlan16 interface";
+            family inet {
+                address ${mgmtIp1}/24;
+            }
+        }
+    }
+    lo0 {
+        unit 0 {
+            description "${hostname} mgmt lo0.0";
+            family inet {
+                filter {
+                    input re-protect;
+                }
+                address ${cpeLo0}/32;
+            }
+        }
+    }
+}
+snmp {
+    name ${hostname};
+    description ${snmpDesc};
+    location "${location}";
+    client-list SNMP-POLLERS {
+        168.127.8.0/24;
+        168.127.9.0/24;
+        168.127.10.0/24;
+    }
+    community "R3adM3!" {
+        authorization read-write;
+        client-list-name SNMP-POLLERS;
+    }
+    trap-options {
+        source-address ${cpeLo0};
+    }
+    trap-group "R3adM3!" {
+        version v2;
+        categories {
+            authentication;
+            chassis;
+            link;
+            remote-operations;
+            routing;
+            startup;
+            rmon-alarm;
+            vrrp-events;
+            configuration;
+            services;
+            otn-alarms;
+        }
+        targets {
+            168.127.8.106;
+            168.127.8.90;
+            168.127.10.106;
+            168.127.10.90;
+        }
+    }
+}
+forwarding-options {
+    storm-control-profiles default {
+        all;
+    }
+}
+routing-options {
+    static {
+        route 0.0.0.0/0 {
+            qualified-next-hop ${mgmtIpNxh} {
+                preference 5;
+            }
+        }
+    }
+}
+protocols {
+    lldp {
+        management-address ${cpeLo0};
+        port-id-subtype interface-name;
+        neighbour-port-info-display port-id;
+        interface all;
+        }
+    lldp-med {
+        interface all;
+    }
+    igmp-snooping {
+        vlan default;
+        vlan all;
+    }
+    rstp {
+        interface ge-0/0/0;
+        interface ge-0/0/1;
+        interface ge-0/0/2;
+        interface ge-0/0/3;
+        interface ge-0/0/4;
+        interface xe-0/2/3;
+        interface ae0;
+    }
+}
+policy-options {
+    prefix-list fw-network-infrastructure-regionally-specific {
+        ${mgmtIpNet}/24;
+        168.127.8.0/24;
+        168.127.9.0/24;
+        168.127.10.0/24;
+    }
+    prefix-list fw-all-local-bgp-peers {
+        apply-path "protocols bgp group <*> neighbor <*>";
+    }
+    prefix-list fw-tacplus-servers {
+        apply-path "system tacplus-server <*>";
+    }
+    prefix-list fw-name-servers {
+        apply-path "system name-server <*>";
+    }
+    prefix-list fw-ntp-servers {
+        apply-path "system ntp server <*>";
+    }
+    prefix-list fw-ftp-servers {
+        ${mgmtIpNet}/24;
+        168.127.8.0/24;
+        168.127.9.0/24;
+        168.127.10.0/24;
+    }
+    prefix-list fw-snmp-list-regionally-specific {
+        ${mgmtIpNet}/24;
+        168.127.8.0/24;
+        168.127.9.0/24;
+        168.127.10.0/24;
+    }
+    prefix-list fw-global-telnet-ssh {
+        ${mgmtIpNet}/24;
+        168.127.8.0/24;
+        168.127.9.0/24;
+        168.127.10.0/24;
+    }
+    prefix-list fw-internal-monitoring {
+        ${mgmtIpNet}/24;
+        168.127.8.0/24;
+        168.127.9.0/24;
+        168.127.10.0/24;
+    }
+    prefix-list list-mgmt_lo0 {
+        10.200.0.0/16;
+    }
+}
+class-of-service {
+    classifiers {
+        ieee-802.1 CLASSIFY-L2-TRAFFIC {
+            forwarding-class EXPEDITED-FORWARDING {
+                loss-priority low code-points 101;
+            }
+            forwarding-class REAL-TIME {
+                loss-priority low code-points 100;
+                loss-priority high code-points 011;
+            }
+            forwarding-class DATA {
+                loss-priority low code-points 010;
+                loss-priority high code-points [ 000 001 111 ];
+            }
+            forwarding-class NETWORK-CONTROL {
+                loss-priority low code-points 110;
+            }
+        }
+        inet-precedence CLASSIFY-IP-TRAFFIC {
+            forwarding-class EXPEDITED-FORWARDING {
+                loss-priority low code-points ef;
+            }
+            forwarding-class REAL-TIME {
+                loss-priority low code-points af41;
+                loss-priority high code-points af31;
+            }
+            forwarding-class DATA {
+                loss-priority low code-points af21;
+                loss-priority high code-points [ be af11 cs7 ];
+            }
+            forwarding-class NETWORK-CONTROL {
+                loss-priority low code-points nc1;
+            }
+        }
+    }
+    forwarding-classes {
+        queue 0 DATA;
+        queue 1 REAL-TIME;
+        queue 2 EXPEDITED-FORWARDING;
+        queue 3 NETWORK-CONTROL;
+    }
+    interfaces {
+        ge-* {
+            scheduler-map 4-QUEUE-SCHEDULER-MAP;
+            unit * {
+                classifiers {
+                    ieee-802.1 CLASSIFY-L2-TRAFFIC;
+                    inet-precedence CLASSIFY-IP-TRAFFIC;
+                }
+                rewrite-rules {
+                    ieee-802.1 MAINTAIN-dot1p;
+                    inet-precedence MAINTAIN-IPP;
+                }
+            }
+        }
+        xe-* {
+            scheduler-map 4-QUEUE-SCHEDULER-MAP;
+            unit * {
+                classifiers {
+                    ieee-802.1 CLASSIFY-L2-TRAFFIC;
+                    inet-precedence CLASSIFY-IP-TRAFFIC;
+                }
+                rewrite-rules {
+                    ieee-802.1 MAINTAIN-dot1p;
+                    inet-precedence MAINTAIN-IPP;
+                }
+            }
+        }
+        ae* {
+            scheduler-map 4-QUEUE-SCHEDULER-MAP;
+            unit * {
+                classifiers {
+                    ieee-802.1 CLASSIFY-L2-TRAFFIC;
+                    inet-precedence CLASSIFY-IP-TRAFFIC;
+                }
+                rewrite-rules {
+                    ieee-802.1 MAINTAIN-dot1p;
+                    inet-precedence MAINTAIN-IPP;
+                }
+            }
+        }
+    }
+    rewrite-rules {
+        ieee-802.1 MAINTAIN-dot1p {
+            forwarding-class DATA {
+                loss-priority low code-point 010;
+                loss-priority high code-point 000;
+            }
+            forwarding-class EXPEDITED-FORWARDING {
+                loss-priority low code-point 101;
+            }
+            forwarding-class NETWORK-CONTROL {
+                loss-priority low code-point 110;
+            }
+            forwarding-class REAL-TIME {
+                loss-priority low code-point 100;
+                loss-priority high code-point 011;
+            }
+        }
+        inet-precedence MAINTAIN-IPP {
+            forwarding-class DATA {
+                loss-priority low code-point af21;
+                loss-priority high code-point be;
+            }
+            forwarding-class EXPEDITED-FORWARDING {
+                loss-priority low code-point ef;
+            }
+            forwarding-class NETWORK-CONTROL {
+                loss-priority low code-point nc1;
+            }
+            forwarding-class REAL-TIME {
+                loss-priority low code-point af41;
+                loss-priority high code-point af31;
+            }
+        }
+    }
+    scheduler-maps {
+        4-QUEUE-SCHEDULER-MAP {
+            forwarding-class NETWORK-CONTROL scheduler NC;
+            forwarding-class EXPEDITED-FORWARDING scheduler EF;
+            forwarding-class DATA scheduler BE;
+            forwarding-class REAL-TIME scheduler RT;
+        }
+    }
+    schedulers {
+        EF {
+            transmit-rate percent 40;
+            buffer-size percent 40;
+        }
+        NC {
+            transmit-rate percent 5;
+            buffer-size percent 5;
+        }
+        RT {
+            transmit-rate percent 45;
+            buffer-size percent 45;
+        }
+        BE {
+            transmit-rate percent 10;
+            buffer-size percent 10;
+        }
+    }
+}
+firewall {
+    family inet {
+        filter re-protect {
+            apply-groups inet-filter-default-reject;
+            term bgp-allow-internal {
+                from {
+                    source-prefix-list {
+                        fw-network-infrastructure-regionally-specific;
+                    }
+                    protocol tcp;
+                    source-port bgp;
+                }
+                then {
+                    policer bgp-allow-internal-5m-policer;
+                    count bgp-allow-internal-counter;
+                    accept;
+                }
+            }
+            term bgp-allow-external {
+                from {
+                    source-prefix-list {
+                        fw-all-local-bgp-peers;
+                    }
+                    protocol tcp;
+                    source-port bgp;
+                }
+                then {
+                    policer bgp-allow-external-5m-policer;
+                    count bgp-allow-external-counter;
+                    accept;
+                }
+            }
+            term dns-allow {
+                from {
+                    source-prefix-list {
+                        fw-name-servers;
+                    }
+                    protocol udp;
+                    source-port domain;
+                }
+                then {
+                    policer dns-allow-1m-policer;
+                    count dns-allow-counter;
+                    accept;
+                }
+            }
+            term ftp-allow {
+                from {
+                    source-prefix-list {
+                        fw-ftp-servers;
+                        fw-network-infrastructure-regionally-specific;
+                    }
+                    protocol tcp;
+                    source-port [ ftp ftp-data ];
+                }
+                then {
+                    policer ftp-allow-10m-policer;
+                    count ftp-allow-counter;
+                    accept;
+                }
+            }
+            term ntp-allow-internal {
+                from {
+                    source-prefix-list {
+                        fw-ntp-servers;
+                        fw-network-infrastructure-regionally-specific;
+                    }
+                    protocol udp;
+                    source-port  ntp;
+                }
+                then {
+                    policer ntp-allow-internal-1m-policer;
+                    count ntp-allow-internal-counter;
+                    accept;
+                }
+            }
+            term ntp-allow-external {
+                from {
+                    protocol udp;
+                    source-port  ntp;
+                }
+                then {
+                    policer ntp-allow-external-1m-policer;
+                    count ntp-allow-external;
+                    accept;
+                }
+            }
+            term snmp-allow {
+                from {
+                    source-prefix-list {
+                        fw-snmp-list-regionally-specific;
+                    }
+                    protocol udp;
+                    destination-port snmp;
+                }
+                then {
+                    policer snmp-allow-5m-policer;
+                    count snmp-allow;
+                    accept;
+                }
+            }
+            term telnet-ssh-allow {
+                from {
+                    source-prefix-list {
+                        fw-global-telnet-ssh;
+                    }
+                    protocol tcp;
+                    destination-port [ telnet ssh ];
+                }
+                then {
+                    policer telnet-ssh-allow-1m-policer;
+                    count telnet-ssh-allow-counter;
+                    accept;
+                }
+            }
+            term tacplus-allow {
+                from {
+                    source-prefix-list {
+                        fw-tacplus-servers;
+                    }
+                    protocol udp;
+                    source-port 49;
+                }
+                then {
+                    policer tacplus-allow-1m-policer;
+                    count tacplus-allow-counter;
+                    accept;
+                }
+            }
+            term vrrp-allow {
+                from {
+                    destination-address {
+                        224.0.0.18/32;
+                    }
+                    protocol vrrp;
+                }
+                then {
+                    policer vrrp-allow-1m-policer;
+                    count vrrp-allow-counter;
+                    accept;
+                }
+            }
+            term high-udp-allow-internal {
+                from {
+                    source-prefix-list {
+                        fw-internal-monitoring;
+                        fw-network-infrastructure-regionally-specific;
+                    }
+                    protocol udp;
+                    destination-port 1023-65535;
+                }
+                then {
+                    policer high-udp-allow-internal-1m-policer;
+                    count high-udp-allow-internal-counter;
+                    accept;
+                }
+            }
+            term high-udp-allow-external {
+                from {
+                    protocol udp;
+                    destination-port 1023-65535;
+                }
+                then {
+                    policer high-udp-allow-external-1m-policer;
+                    count high-udp-allow-external-counter;
+                    accept;
+                }
+            }
+            term icmp-allow-internal {
+                from {
+                    source-prefix-list {
+                        fw-internal-monitoring;
+                        fw-network-infrastructure-regionally-specific;
+                    }
+                    protocol icmp;
+                }
+                then {
+                    policer icmp-allow-internal-1m-policer;
+                    count icmp-allow-internal-counter;
+                    accept;
+                }
+            }
+            term icmp-allow-external {
+                from {
+                    protocol icmp;
+                }
+                then {
+                    policer icmp-allow-external-1m-policer;
+                    count icmp-allow-external-counter;
+                    accept;
+                }
+            }
+            term tcp-established-allow {
+                from {
+                    protocol tcp;
+                    tcp-established;
+                }
+                then {
+                    policer tcp-established-allow-100k-policer;
+                    count tcp-established-allow-counter;
+                    accept;
+                }
+            }
+        }
+    }
+    policer bgp-allow-internal-5m-policer {
+        if-exceeding {
+            bandwidth-limit 5m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer bgp-allow-external-5m-policer {
+        if-exceeding {
+            bandwidth-limit 5m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer dns-allow-1m-policer {
+        if-exceeding {
+            bandwidth-limit 1m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer ftp-allow-10m-policer {
+        if-exceeding {
+            bandwidth-limit 10m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer ntp-allow-internal-1m-policer {
+        if-exceeding {
+            bandwidth-limit 1m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer ntp-allow-external-1m-policer {
+        if-exceeding {
+            bandwidth-limit 1m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer snmp-allow-5m-policer {
+        if-exceeding {
+            bandwidth-limit 5m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer telnet-ssh-allow-1m-policer {
+        if-exceeding {
+            bandwidth-limit 1m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer high-udp-allow-internal-1m-policer {
+        if-exceeding {
+            bandwidth-limit 1m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer icmp-allow-external-1m-policer {
+        if-exceeding {
+            bandwidth-limit 1m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer tacplus-allow-1m-policer {
+        if-exceeding {
+            bandwidth-limit 1m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer vrrp-allow-1m-policer {
+        if-exceeding {
+            bandwidth-limit 1m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer high-udp-allow-external-1m-policer {
+        if-exceeding {
+            bandwidth-limit 1m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer icmp-allow-internal-1m-policer {
+        if-exceeding {
+            bandwidth-limit 1m;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+    policer tcp-established-allow-100k-policer {
+        if-exceeding {
+            bandwidth-limit 100k;
+            burst-size-limit 10k;
+        }
+        then discard;
+    }
+}
+vlans {
+    COT {
+        description "COT Customer";
+        vlan-id-list 100-116;
+    }
+    KCTCS {
+        description "KCTCS Customer";
+        vlan-id-list [ 800-805 1800-1805];
+    }
+    AOC {
+        description "AOC Customer";
+        vlan-id-list 300-310;
+    }
+    Univer {
+        description "University Customer";
+        vlan-id-list 400-410;
+    }
+    RFC {
+        description "RFC 2544 Test";
+        vlan-id 2544;
+    }
+    mgmt {
+        description "Management vlan16";
+        vlan-id 16;
+        l3-interface irb.16;
+    }
+}
+
+########################################################################################################################
+========================================================================================================================
+`;
+
+            // Create a blob for the configuration script
+            const blob = new Blob([configScript], { type: 'text/plain' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'router_config.txt';
+
+            // Automatically click the link to trigger the download
+            link.click();
+        }
+    </script>
+</body>
+</html>
